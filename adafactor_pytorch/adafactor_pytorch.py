@@ -12,18 +12,16 @@ def exists(val):
 def rms(tensor):
     return tensor.norm(2) / (tensor.numel() ** 0.5)
 def approx_gradient(self, exp_avg_sq_row, exp_avg_sq_col):
-        r_factor = (
-            (exp_avg_sq_row / exp_avg_sq_row.mean(dim=-1, keepdim=True))
-            .rsqrt_()
-            .unsqueeze(-1)
-        )
-        c_factor = exp_avg_sq_col.unsqueeze(-2).rsqrt()
-        return torch.mul(r_factor, c_factor)
+    r_factor = (
+        (exp_avg_sq_row / exp_avg_sq_row.mean(dim=-1, keepdim=True))
+        .rsqrt_()
+        .unsqueeze(-1)
+    )
+    c_factor = exp_avg_sq_col.unsqueeze(-2).rsqrt()
+    return torch.mul(r_factor, c_factor)
 # update functions
-
-def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, group, state):
+def get_lr(p, lr, group, state):
     # update lr
-    factored = len(grad.shape) >= 2
     if group['relative_step']:
         min_step = (
             1e-6 * state["step"] if group["warmup_init"] else 1e-2
@@ -34,12 +32,10 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, group, state):
         param_rms = rms(p)
         param_scale = max(group["eps"][1], param_rms)
     lr = param_scale * lr
-
-    update = (grad**2) + group["eps"][0]
+    return lr
+def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None):
+    update = (grad**2) + eps1
     if factored:
-        exp_avg_squared_row = state["exp_avg_squared_row"]
-        exp_avg_squared_column = state["exp_avg_squared_column"]
-
         exp_avg_squared_row.mul_(beta2).add_(
             update.mean(dim=-1), alpha=1.0 - beta2
         )
@@ -51,22 +47,18 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, group, state):
         update = approx_gradient(exp_avg_squared_row, exp_avg_squared_column)
         update.mul_(grad)
     else:
-        exp_avg_sq = state["exp_avg_sq"]
-
-        exp_avg_sq.mul_(beta2).add_(update, alpha=1.0 - beta2)
-        update = exp_avg_sq.rsqrt().mul_(grad)
+        exp_avg_squared.mul_(beta2).add_(update, alpha=1.0 - beta2)
+        update = exp_avg_squared.rsqrt().mul_(grad)
 
     update.div_(
-        (rms(update) / group["clip_threshold"]).clamp_(min=1.0)
+        (rms(update) / clip_threshold).clamp_(min=1.0)
     )
-    update.mul_(group["lr"])
 
-    if group['beta1'] is not None:
-        exp_avg = state["exp_avg"]
-        exp_avg.mul_(group["beta1"]).add_(update, alpha=1 - group["beta1"])
+    if beta1 is not None:
+        exp_avg.mul_(beta1).add_(update, alpha=1 - beta1)
         update = exp_avg
 
-    if group["weight_decay"] != 0:
+    if weight_decay != 0:
         p.add_(
             p, alpha=-weight_decay*lr
         )
@@ -87,7 +79,7 @@ class Adafactor(Optimizer):
         eps: float = (1e-30, 1e-3),
         clip_threshold: float = 1.0,
         decay_rate: float = -0.8,
-        beta1: float = None,
+        betas: float = (None, None),
         weight_decay: float = 0.0,
         scale_parameter: bool = True,
         relative_step: bool = True,
@@ -134,7 +126,6 @@ class Adafactor(Optimizer):
                 (default: False)
         """
         assert lr > 0.
-        assert 0. <= beta1 <= 1
         assert decay_rate < 0
 
         defaults = dict(
@@ -142,7 +133,7 @@ class Adafactor(Optimizer):
             eps=eps,
             clip_threshold=clip_threshold,
             decay_rate=decay_rate,
-            beta1 = beta1,
+            betas = betas,
             weight_decay = weight_decay,
             scale_parameter=scale_parameter,
             relative_step=relative_step,
@@ -172,10 +163,10 @@ class Adafactor(Optimizer):
         for group in self.param_groups:
             for p in filter(lambda p: exists(p.grad), group['params']):
 
-                grad, lr, weight_decay, beta1, state = p.grad, group['lr'], group['weight_decay'], group['beta1'], self.state[p]
+                grad, lr, weight_decay, betas, eps, state = p.grad, group['lr'], group['weight_decay'], group['betas'], group['eps'], self.state[p]
                 do_factor = len(grad.shape) >= 2
                 # init state - exponential moving average of gradient values
-
+                beta1 = betas[0]
                 if len(state) == 0:
                     state['step'] = 0
                     if beta1 is not None:
@@ -197,9 +188,13 @@ class Adafactor(Optimizer):
                     else:
                         state["exp_avg_squared"] = state["exp_avg_squared"].to(grad)
 
-                    exp_avg = state['exp_avg']
+                    exp_avg = state.get('exp_avg', None)
                     state["step"] += 1
-                    beta2 = self.decay_func(state["step"])
+                    if betas[1] is None:
+                        beta2 = self.decay_func(state["step"])
+                    else:
+                        beta2 = betas[1]
+                    lr = get_lr(p, group, state)
                     self.update_fn(
                         p,
                         grad,
@@ -208,7 +203,11 @@ class Adafactor(Optimizer):
                         weight_decay,
                         beta1,
                         beta2,
-                        group
+                        eps1=eps[0],
+                        factored=do_factor,
+                        exp_avg_squared_row=state.get('exp_avg_squared_row', None),
+                        exp_avg_squared_column=state.get('exp_avg_squared_column', None),
+                        exp_avg_squared=state.get('exp_avg_squared', None),
                     )
 
         return loss
