@@ -34,6 +34,10 @@ def get_lr(p, lr, group, state):
     lr = param_scale * lr
     return lr
 def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None):
+    if weight_decay != 0:
+        p.add_(
+            p, alpha=-weight_decay*lr
+        )
     update = (grad**2) + eps1
     if factored:
         exp_avg_squared_row.mul_(beta2).add_(
@@ -58,10 +62,6 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_thres
         exp_avg.mul_(beta1).add_(update, alpha=1 - beta1)
         update = exp_avg
 
-    if weight_decay != 0:
-        p.add_(
-            p, alpha=-weight_decay*lr
-        )
 
     p.add_(update, alpha=-lr)
 

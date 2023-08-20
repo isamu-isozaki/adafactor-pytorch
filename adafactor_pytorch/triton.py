@@ -47,14 +47,17 @@ def matrix_update_fn_kernel(
     offset_p_ptr = p_ptr + offsets
     offset_grad_ptr = grad_ptr + offsets
     offset_exp_avg_ptr = exp_avg_ptr + offsets
-    exp_avg_squared_row_ptr = exp_avg_squared_row_ptr + offsets
-    exp_avg_squared_column_ptr = exp_avg_squared_column_ptr + offsets
+    offset_exp_avg_squared_row_ptr = exp_avg_squared_row_ptr + offsets
+    offset_exp_avg_squared_column_ptr = exp_avg_squared_column_ptr + offsets
 
     # load
 
     p = tl.load(offset_p_ptr, mask = mask)
     grad = tl.load(offset_grad_ptr, mask = mask)
     exp_avg = tl.load(offset_exp_avg_ptr, mask = mask)
+    exp_avg_squared_row = tl.load(offset_exp_avg_squared_row_ptr, mask=mask)
+    exp_avg_squared_column = tl.load(offset_exp_avg_squared_column_ptr, mask=mask)
+
 
     # stepweight decay
 
@@ -113,12 +116,13 @@ def vector_update_fn_kernel(
     offset_p_ptr = p_ptr + offsets
     offset_grad_ptr = grad_ptr + offsets
     offset_exp_avg_ptr = exp_avg_ptr + offsets
-    exp_avg_squared_ptr = exp_avg_squared_ptr + offsets
+    offset_exp_avg_squared_ptr = exp_avg_squared_ptr + offsets
     # load
 
     p = tl.load(offset_p_ptr, mask = mask)
     grad = tl.load(offset_grad_ptr, mask = mask)
     exp_avg = tl.load(offset_exp_avg_ptr, mask = mask)
+    exp_avg_squared_ptr = tl.load(offset_exp_avg_squared_ptr, mask=mask)
 
     # stepweight decay
 
