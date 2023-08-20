@@ -32,7 +32,13 @@ def matrix_update_fn_kernel(
     weight_decay,
     beta1,
     beta2,
+    eps1,
+    eps2,
+    scale_parameter,
+    clip_threshold,
     n_elements,
+    n_row_elements,
+    n_column_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(axis = 0)
@@ -41,6 +47,8 @@ def matrix_update_fn_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
 
     mask = offsets < n_elements
+    row_mask = offsets < n_row_elements
+    column_mask = offsets < n_column_elements
 
     # offsetted pointers
 
@@ -55,37 +63,54 @@ def matrix_update_fn_kernel(
     p = tl.load(offset_p_ptr, mask = mask)
     grad = tl.load(offset_grad_ptr, mask = mask)
     exp_avg = tl.load(offset_exp_avg_ptr, mask = mask)
-    exp_avg_squared_row = tl.load(offset_exp_avg_squared_row_ptr, mask=mask)
-    exp_avg_squared_column = tl.load(offset_exp_avg_squared_column_ptr, mask=mask)
+    exp_avg_squared_row = tl.load(offset_exp_avg_squared_row_ptr, mask=row_mask)
+    exp_avg_squared_column = tl.load(offset_exp_avg_squared_column_ptr, mask=column_mask)
 
+    # Update lr
 
+    if scale_parameter:
+        param_rms = tl.sqrt(tl.sum(p**2)/n_elements)
+        param_scale = tl.max(eps2, param_rms)
+    lr = param_scale * lr
     # stepweight decay
 
     p = p * (1 - lr * weight_decay)
 
-    # diff between momentum running average and grad
+    # get gradient squared
 
-    diff = exp_avg - grad
+    update = grad ** 2 + eps1
 
-    # weight update
+    # update row and columns
+    exp_avg_squared_row = exp_avg_squared_row*beta2 + tl.cumsum(update, axis=-1) * (1-beta2)
+    exp_avg_squared_column = exp_avg_squared_column*beta2 + tl.cumsum(update, axis=-2) * (1-beta2)
 
-    update = diff * beta1 + grad
+    # approximate gradient
 
-    # torch.sign
+    r_factor = tl.expand_dims(1.0/tl.sqrt(exp_avg_squared_row / tl.cumsum(exp_avg_squared_row, axis=-1)), axis=-1)
+    c_factor = 1.0/tl.sqrt(tl.expand_dims(exp_avg_squared_column, axis=-2))
+    update = tl.dot(r_factor, c_factor)
+    update = tl.dot(update, grad)
+    denom = tl.sqrt(tl.sum(update**2)/n_elements)/ clip_threshold
 
-    can_update = update != 0
-    update_sign = tl.where(update > 0, -lr, lr)
+    # clamp so the minimum is 1
+    denom =  tl.where(denom < 1.0, 1.0, denom)
+    update = update / denom
 
-    p = p + update_sign * can_update
+    # update momentum running average
 
-    # decay the momentum running average coefficient
+    exp_avg = exp_avg*beta1 + update*(1-beta1)
+    update = exp_avg
 
-    exp_avg = diff * beta2 + grad
+    p = p - lr*update
+
 
     # store new params and momentum running average coefficient
-
     tl.store(offset_p_ptr, p, mask = mask)
     tl.store(offset_exp_avg_ptr, exp_avg, mask = mask)
+    tl.store(offset_exp_avg_squared_row_ptr, exp_avg_squared_row, mask = row_mask)
+    tl.store(offset_exp_avg_squared_column_ptr, exp_avg_squared_column, mask = column_mask)
+
+
 
 @triton.autotune(configs = [
     triton.Config({'BLOCK_SIZE': 128}, num_warps = 4, pre_hook = clone_inplace_updated_params),
@@ -101,6 +126,10 @@ def vector_update_fn_kernel(
     weight_decay,
     beta1,
     beta2,
+    eps1,
+    eps2,
+    clip_threshold,
+    scale_parameter,
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -117,6 +146,7 @@ def vector_update_fn_kernel(
     offset_grad_ptr = grad_ptr + offsets
     offset_exp_avg_ptr = exp_avg_ptr + offsets
     offset_exp_avg_squared_ptr = exp_avg_squared_ptr + offsets
+
     # load
 
     p = tl.load(offset_p_ptr, mask = mask)
@@ -124,35 +154,40 @@ def vector_update_fn_kernel(
     exp_avg = tl.load(offset_exp_avg_ptr, mask = mask)
     exp_avg_squared_ptr = tl.load(offset_exp_avg_squared_ptr, mask=mask)
 
+    # Update lr
+
+    if scale_parameter:
+        param_rms = tl.sqrt(tl.sum(p**2)/n_elements)
+        param_scale = tl.max(eps2, param_rms)
+    lr = param_scale * lr
     # stepweight decay
 
     p = p * (1 - lr * weight_decay)
 
-    # diff between momentum running average and grad
+    # get gradient squared
 
-    diff = exp_avg - grad
+    update = grad ** 2 + eps1
 
-    # weight update
+    # update exp_avg_squared
+    exp_avg_squared = exp_avg_squared*beta2 + tl.cumsum(update, axis=-1) * (1-beta2)
 
-    update = diff * beta1 + grad
+    # approximate gradient
 
-    # torch.sign
+    update = grad / tl.sqrt(exp_avg_squared)
 
-    can_update = update != 0
-    update_sign = tl.where(update > 0, -lr, lr)
+    # update momentum running average
 
-    p = p + update_sign * can_update
+    exp_avg = exp_avg*beta1 + update*(1-beta1)
+    update = exp_avg
 
-    # decay the momentum running average coefficient
+    p = p - lr*update
 
-    exp_avg = diff * beta2 + grad
 
     # store new params and momentum running average coefficient
-
     tl.store(offset_p_ptr, p, mask = mask)
     tl.store(offset_exp_avg_ptr, exp_avg, mask = mask)
-
-def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None):
+    tl.store(offset_exp_avg_squared_ptr, exp_avg_squared, mask = mask)
+def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, eps2, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None, scale_parameter=True):
     assert all([t.is_cuda for t in (p, grad)])
     # For now, we assume that exp_avg is not None.
     assert exp_avg is not None, "Assuming beta1 is not None"
@@ -180,7 +215,9 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_thres
             beta1,
             beta2,
             eps1,
+            eps2,
             clip_threshold,
+            scale_parameter,
             n_elements
         )
     else:
@@ -194,6 +231,8 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_thres
             beta1,
             beta2,
             eps1,
+            eps2,
             clip_threshold,
+            scale_parameter,
             n_elements
         )

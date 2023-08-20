@@ -10,10 +10,10 @@ def exists(val):
     return val is not None
 
 def rms(tensor):
-    return tensor.norm(2) / (tensor.numel() ** 0.5)
+    return (tensor.norm(2) / tensor.numel()) ** 0.5
 def approx_gradient(self, exp_avg_sq_row, exp_avg_sq_col):
     r_factor = (
-        (exp_avg_sq_row / exp_avg_sq_row.mean(dim=-1, keepdim=True))
+        (exp_avg_sq_row / exp_avg_sq_row.sum(dim=-1, keepdim=True))
         .rsqrt_()
         .unsqueeze(-1)
     )
@@ -27,13 +27,14 @@ def get_lr(p, lr, group, state):
             1e-6 * state["step"] if group["warmup_init"] else 1e-2
         )
         lr = min(min_step, 1.0 / math.sqrt(state["step"]))
-    param_scale = 1
-    if group["scale_parameter"]:
-        param_rms = rms(p)
-        param_scale = max(group["eps"][1], param_rms)
-    lr = param_scale * lr
     return lr
-def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None):
+def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, eps2, clip_threshold, factored=True, exp_avg_squared_row=None, exp_avg_squared_column=None, exp_avg_squared=None, scale_parameter=True):
+    # update lr
+    param_scale = 1
+    if scale_parameter:
+        param_rms = rms(p)
+        param_scale = max(eps2, param_rms)
+    lr = param_scale * lr
     if weight_decay != 0:
         p.add_(
             p, alpha=-weight_decay*lr
@@ -41,10 +42,10 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, clip_thres
     update = (grad**2) + eps1
     if factored:
         exp_avg_squared_row.mul_(beta2).add_(
-            update.mean(dim=-1), alpha=1.0 - beta2
+            update.sum(dim=-1), alpha=1.0 - beta2
         )
         exp_avg_squared_column.mul_(beta2).add_(
-            update.mean(dim=-2), alpha=1.0 - beta2
+            update.sum(dim=-2), alpha=1.0 - beta2
         )
 
         # Approximation of exponential moving average of square of gradient
@@ -86,45 +87,6 @@ class Adafactor(Optimizer):
         warmup_init: bool = False,
         use_triton: bool = False
     ):
-        """Implements Adafactor algorithm.
-
-        Taken from fairseq package from Meta and lion-pytorch. Thanks to both!
-
-        This implementation is based on:
-        `Adafactor: Adaptive Learning Rates with Sublinear Memory Cost`
-        (see https://arxiv.org/abs/1804.04235)
-
-        Note that this optimizer internally adjusts the learning rate
-        depending on the *scale_parameter*, *relative_step* and
-        *warmup_init* options. To use a manual (external) learning rate
-        schedule you should set `scale_parameter=False` and
-        `relative_step=False`.
-
-        Args:
-            params (iterable): iterable of parameters to optimize or dicts defining
-                parameter groups
-            lr (float, optional): external learning rate (default: 1e-4)
-            eps (tuple[float, float]): regularization constans for square gradient
-                and parameter scale respectively (default: (1e-30, 1e-3))
-            clip_threshold (float): threshold of root mean square of
-                final gradient update. This enforces max strength of update as opposed to gradient clipping.
-                (default: 1.0)
-            decay_rate (float): coefficient used to compute running averages of square
-                gradient. This value is used to calculate Beta 2 which is responsible for
-                the second moment update(square gradient) (default: -0.8)
-            beta1 (float): coefficient used for computing running averages of gradient
-                (default: None)
-            weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
-            scale_parameter (bool): if True, learning rate is scaled by root mean square of
-                parameter (default: True)
-            relative_step (bool): if True, time-dependent learning rate is computed
-                instead of external learning rate. The rate is calculated as 1-1/sqrt(timesteps).
-                The effect is the same as learning rate decay.
-                (default: True)
-            warmup_init (bool): time-dependent learning rate computation depends on
-                whether warm-up initialization is being used. This is equivalent to warmup in lr schedulers.
-                (default: False)
-        """
         assert lr > 0.
         assert decay_rate < 0
 
@@ -204,10 +166,12 @@ class Adafactor(Optimizer):
                         beta1,
                         beta2,
                         eps1=eps[0],
+                        eps2=eps[1],
                         factored=do_factor,
                         exp_avg_squared_row=state.get('exp_avg_squared_row', None),
                         exp_avg_squared_column=state.get('exp_avg_squared_column', None),
                         exp_avg_squared=state.get('exp_avg_squared', None),
+                        scale_parameter=group['scale_parameter']
                     )
 
         return loss
