@@ -81,12 +81,12 @@ def matrix_update_fn_kernel(
     update = grad ** 2 + eps1
 
     # update row and columns
-    exp_avg_squared_row = exp_avg_squared_row*beta2 + tl.cumsum(update, axis=-1) * (1-beta2)
-    exp_avg_squared_column = exp_avg_squared_column*beta2 + tl.cumsum(update, axis=-2) * (1-beta2)
+    exp_avg_squared_row = exp_avg_squared_row*beta2 + tl.sum(update, axis=-1) * (1-beta2)
+    exp_avg_squared_column = exp_avg_squared_column*beta2 + tl.sum(update, axis=-2) * (1-beta2)
 
     # approximate gradient
 
-    r_factor = tl.expand_dims(1.0/tl.sqrt(exp_avg_squared_row / tl.cumsum(exp_avg_squared_row, axis=-1)), axis=-1)
+    r_factor = tl.expand_dims(1.0/tl.sqrt(exp_avg_squared_row / tl.sum(exp_avg_squared_row, axis=-1)), axis=-1)
     c_factor = 1.0/tl.sqrt(tl.expand_dims(exp_avg_squared_column, axis=-2))
     update = tl.dot(r_factor, c_factor)
     update = tl.dot(update, grad)
