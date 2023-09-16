@@ -196,11 +196,13 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, eps2, clip
     if exp_avg_squared_row is not None:
         assert exp_avg_squared_row.is_cuda
         assert exp_avg_squared_column.is_cuda
+        n_row_elements = exp_avg_squared_row.numel()
+        n_column_elements = exp_avg_squared_column.numel()
     if exp_avg_squared is not None:
         assert exp_avg_squared.is_cuda
 
     n_elements = p.numel()
-
+    print(p.shape)
 
     grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
     if factored:
@@ -216,9 +218,11 @@ def update_fn(p, grad, exp_avg, lr, weight_decay, beta1, beta2, eps1, eps2, clip
             beta2,
             eps1,
             eps2,
-            clip_threshold,
             scale_parameter,
-            n_elements
+            clip_threshold,
+            n_elements,
+            n_row_elements,
+            n_column_elements
         )
     else:
         vector_update_fn_kernel[grid](

@@ -11,7 +11,7 @@ def exists(val):
 
 def rms(tensor):
     return (tensor.norm(2) / tensor.numel()) ** 0.5
-def approx_gradient(self, exp_avg_sq_row, exp_avg_sq_col):
+def approx_gradient(exp_avg_sq_row, exp_avg_sq_col):
     r_factor = (
         (exp_avg_sq_row / exp_avg_sq_row.sum(dim=-1, keepdim=True))
         .rsqrt_()
@@ -20,7 +20,7 @@ def approx_gradient(self, exp_avg_sq_row, exp_avg_sq_col):
     c_factor = exp_avg_sq_col.unsqueeze(-2).rsqrt()
     return torch.mul(r_factor, c_factor)
 # update functions
-def get_lr(p, lr, group, state):
+def get_lr(lr, group, state):
     # update lr
     if group['relative_step']:
         min_step = (
@@ -82,8 +82,8 @@ class Adafactor(Optimizer):
         decay_rate: float = -0.8,
         betas: float = (None, None),
         weight_decay: float = 0.0,
-        scale_parameter: bool = True,
-        relative_step: bool = True,
+        scale_parameter: bool = False,
+        relative_step: bool = False,
         warmup_init: bool = False,
         use_triton: bool = False
     ):
@@ -125,7 +125,7 @@ class Adafactor(Optimizer):
         for group in self.param_groups:
             for p in filter(lambda p: exists(p.grad), group['params']):
 
-                grad, lr, weight_decay, betas, eps, state = p.grad, group['lr'], group['weight_decay'], group['betas'], group['eps'], self.state[p]
+                grad, lr, weight_decay, betas, eps, clip_threshold, state = p.grad, group['lr'], group['weight_decay'], group['betas'], group['eps'], group['clip_threshold'], self.state[p]
                 do_factor = len(grad.shape) >= 2
                 # init state - exponential moving average of gradient values
                 beta1 = betas[0]
@@ -156,7 +156,7 @@ class Adafactor(Optimizer):
                         beta2 = self.decay_func(state["step"])
                     else:
                         beta2 = betas[1]
-                    lr = get_lr(p, group, state)
+                    lr = get_lr(lr, group, state)
                     self.update_fn(
                         p,
                         grad,
@@ -165,8 +165,9 @@ class Adafactor(Optimizer):
                         weight_decay,
                         beta1,
                         beta2,
-                        eps1=eps[0],
-                        eps2=eps[1],
+                        eps[0],
+                        eps[1],
+                        clip_threshold,
                         factored=do_factor,
                         exp_avg_squared_row=state.get('exp_avg_squared_row', None),
                         exp_avg_squared_column=state.get('exp_avg_squared_column', None),
