@@ -67,11 +67,11 @@ def matrix_update_fn_kernel(
     exp_avg_squared_column = tl.load(offset_exp_avg_squared_column_ptr, mask=column_mask)
 
     # Update lr
-
-    if scale_parameter:
-        param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
-        param_scale = tl.max(eps2, param_rms)
-    lr = param_scale * lr
+    # TODO: implement below. Currently, I'm not sure how to do this with dynamic shapes for p
+    # if scale_parameter:
+    #     param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
+    #     param_scale = tl.max(eps2, param_rms)
+    # lr = param_scale * lr
     # stepweight decay
 
     p = p * (1 - lr * weight_decay)
@@ -157,11 +157,11 @@ def vector_update_fn_kernel(
     exp_avg_squared_ptr = tl.load(offset_exp_avg_squared_ptr, mask=mask)
 
     # Update lr
-
-    if scale_parameter:
-        param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
-        param_scale = tl.max(eps2, param_rms)
-    lr = param_scale * lr
+    # TODO: implement below. Currently, I'm not sure how to do this with dynamic shapes for p
+    # if scale_parameter:
+    #     param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
+    #     param_scale = tl.max(eps2, param_rms)
+    # lr = param_scale * lr
     # stepweight decay
 
     p = p * (1 - lr * weight_decay)
