@@ -78,7 +78,7 @@ def matrix_update_fn_kernel(
 
     # get gradient squared
 
-    update = grad ** 2 + eps1
+    update = grad*grad + eps1
 
     # update row and columns
     exp_avg_squared_row = exp_avg_squared_row*beta2 + tl.sum(update, axis=-1) * (1-beta2)
@@ -168,7 +168,7 @@ def vector_update_fn_kernel(
 
     # get gradient squared
 
-    update = grad ** 2 + eps1
+    update = grad*grad+ eps1
 
     # update exp_avg_squared
     exp_avg_squared = exp_avg_squared*beta2 + tl.sum(update, axis=-1) * (1-beta2)
