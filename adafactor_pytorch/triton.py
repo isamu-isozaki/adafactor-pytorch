@@ -69,7 +69,7 @@ def matrix_update_fn_kernel(
     # Update lr
 
     if scale_parameter:
-        param_rms = tl.sqrt(tl.sum(p**2)/n_elements)
+        param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
         param_scale = tl.max(eps2, param_rms)
     lr = param_scale * lr
     # stepweight decay
@@ -92,7 +92,7 @@ def matrix_update_fn_kernel(
     c_factor = tl.reshape(c_factor, [1]+c_factor.shape)
     update = tl.dot(r_factor, c_factor)
     update = tl.dot(update, grad)
-    denom = tl.sqrt(tl.sum(update**2)/n_elements)/ clip_threshold
+    denom = tl.sqrt(tl.sum(update*update)/n_elements)/ clip_threshold
 
     # clamp so the minimum is 1
     denom =  tl.where(denom < 1.0, 1.0, denom)
@@ -159,7 +159,7 @@ def vector_update_fn_kernel(
     # Update lr
 
     if scale_parameter:
-        param_rms = tl.sqrt(tl.sum(p**2)/n_elements)
+        param_rms = tl.sqrt(tl.sum(p*p)/n_elements)
         param_scale = tl.max(eps2, param_rms)
     lr = param_scale * lr
     # stepweight decay
