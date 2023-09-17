@@ -86,9 +86,9 @@ def matrix_update_fn_kernel(
 
     # approximate gradient
 
-    r_factor = 1.0/tl.sqrt(exp_avg_squared_row / tl.sum(exp_avg_squared_row, axis=-1))[..., None]
-    c_factor = 1.0/tl.sqrt(exp_avg_squared_column)[None]
-    update = r_factor * c_factor
+    r_factor = 1.0/tl.sqrt(exp_avg_squared_row / tl.sum(exp_avg_squared_row, axis=-1))
+    c_factor = 1.0/tl.sqrt(exp_avg_squared_column)
+    update = r_factor[..., None] * c_factor[None]
     update = tl.dot(update, grad)
     denom = tl.sqrt(tl.sum(update*update)/n_elements)/ clip_threshold
 
