@@ -88,7 +88,8 @@ def matrix_update_fn_kernel(
 
     r_factor = 1.0/tl.sqrt(exp_avg_squared_row / tl.sum(exp_avg_squared_row, axis=-1))
     c_factor = 1.0/tl.sqrt(exp_avg_squared_column)
-    update = r_factor[..., None] * c_factor[None]
+    r_factor = tl.view(r_factor, r_factor.shape+[1])
+    update = r_factor * c_factor[None]
     update = tl.dot(update, grad)
     denom = tl.sqrt(tl.sum(update*update)/n_elements)/ clip_threshold
 
