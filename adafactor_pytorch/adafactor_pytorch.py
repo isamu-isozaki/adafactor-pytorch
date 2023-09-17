@@ -89,9 +89,6 @@ class Adafactor(Optimizer):
     ):
         assert lr > 0.
         assert decay_rate < 0
-        if use_triton:
-            raise NotImplementedError("Currently in triton small block dot product doesn't work so we need to figure out how to do this in rank 1.")
-
         defaults = dict(
             lr = lr,
             eps=eps,
